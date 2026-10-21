@@ -1,1 +1,5 @@
-print(10)
+from clipboard_app.app import run
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())
