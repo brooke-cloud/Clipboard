@@ -55,7 +55,10 @@ def stylesheet(settings: AppSettings) -> str:
     scroll_handle = "#465166" if settings.theme == "dark" else "#a8b1bf"
     return f"""
         QWidget {{ color: {fg}; font-family: 'Segoe UI', 'Microsoft YaHei UI'; font-size: {settings.font_size}px; }}
-        QMainWindow, QDialog, #root {{ background: {bg}; }}
+        QMainWindow, QDialog, #root, #windowBody {{ background: {bg}; }}
+        QFrame#titleBar {{ background: {card}; border-bottom: 1px solid rgba(128,140,160,0.22); }}
+        QLabel#windowIcon {{ color: white; background: #2563eb; border-radius: 4px; font-weight: 700; }}
+        QLabel#windowTitle {{ font-size: 12px; }}
         QFrame#card {{ background: {card}; border: 1px solid rgba(128,140,160,0.20); border-radius: 11px; }}
         QLineEdit, QTextEdit, QComboBox, QSpinBox, QKeySequenceEdit {{ background: {card}; border: 1px solid rgba(128,140,160,0.25); border-radius: 9px; padding: 8px 10px; }}
         QLineEdit:focus, QTextEdit:focus, QKeySequenceEdit:focus {{ border-color: #2563eb; }}
@@ -65,6 +68,12 @@ def stylesheet(settings: AppSettings) -> str:
         QPushButton#pinButton {{ color: {muted}; border: 1px solid rgba(128,140,160,0.20); background: {card}; }}
         QPushButton#pinButton:hover {{ color: {fg}; border-color: rgba(37,99,235,0.65); }}
         QPushButton#pinButton:checked {{ color: white; background: #2563eb; border-color: #2563eb; }}
+        QPushButton#settingsButton {{ color: {muted}; border: 1px solid rgba(128,140,160,0.20); background: {card}; }}
+        QPushButton#settingsButton:hover {{ color: {fg}; border-color: rgba(37,99,235,0.65); }}
+        QPushButton#titlePinButton, QPushButton#windowButton {{ padding: 0; border-radius: 5px; color: {muted}; }}
+        QPushButton#titlePinButton:hover, QPushButton#windowButton:hover {{ color: {fg}; background: rgba(128,140,160,0.18); }}
+        QPushButton#titlePinButton:checked {{ color: white; background: #2563eb; }}
+        QPushButton#windowButton[closeButton="true"]:hover {{ color: white; background: #dc2626; }}
         QPushButton#categoryButton {{ min-height: 22px; }}
         QPushButton#actionButton {{ padding: 0; border-radius: 6px; color: {muted}; }}
         QPushButton#actionButton:hover {{ color: {fg}; background: rgba(37,99,235,0.16); }}

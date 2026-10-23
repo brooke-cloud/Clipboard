@@ -31,6 +31,7 @@ class ClipboardApplication:
         self.window = MainWindow(self.store, self.service, self.settings)
         self.window.pin_changed.connect(self._save_pin_state)
         self.window.paste_requested.connect(self.paste_to_previous_window)
+        self.window.settings_requested.connect(self.open_settings)
         self._paste_target_hwnd = 0
         self.hotkey = GlobalHotkey(app)
         self.hotkey.activated.connect(self.toggle_window)

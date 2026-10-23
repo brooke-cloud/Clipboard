@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ctypes
+import sys
+from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
@@ -14,6 +17,76 @@ from .clipboard_service import ClipboardService
 from .models import ClipboardItem
 from .settings import AppSettings, stylesheet
 from .storage import HistoryStore
+
+
+class TitleBar(QFrame):
+    pin_toggled = Signal(bool)
+    minimize_requested = Signal()
+    maximize_requested = Signal()
+    close_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("titleBar")
+        self.setFixedHeight(36)
+        self._drag_offset: QPoint | None = None
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 4, 0)
+        layout.setSpacing(2)
+        icon = QLabel("C")
+        icon.setObjectName("windowIcon")
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setFixedSize(20, 20)
+        title = QLabel("Clipboard")
+        title.setObjectName("windowTitle")
+        layout.addWidget(icon)
+        layout.addWidget(title)
+        layout.addStretch()
+        self.pin_button = QPushButton("固定")
+        self.pin_button.setObjectName("titlePinButton")
+        self.pin_button.setCheckable(True)
+        self.pin_button.setFixedSize(52, 28)
+        self.pin_button.setToolTip("固定窗口在其他窗口上方")
+        self.minimize_button = QPushButton("—")
+        self.maximize_button = QPushButton("□")
+        self.close_button = QPushButton("×")
+        for button in (self.minimize_button, self.maximize_button, self.close_button):
+            button.setObjectName("windowButton")
+            button.setFixedSize(42, 32)
+        self.close_button.setProperty("closeButton", True)
+        layout.addWidget(self.pin_button)
+        layout.addWidget(self.minimize_button)
+        layout.addWidget(self.maximize_button)
+        layout.addWidget(self.close_button)
+        self.pin_button.toggled.connect(self.pin_toggled)
+        self.minimize_button.clicked.connect(self.minimize_requested)
+        self.maximize_button.clicked.connect(self.maximize_requested)
+        self.close_button.clicked.connect(self.close_requested)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.LeftButton and not self.window().isMaximized():
+            self.window().move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.maximize_requested.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class ReorderHandle(QPushButton):
@@ -331,20 +404,37 @@ class ItemCard(QFrame):
 class MainWindow(QMainWindow):
     pin_changed = Signal(bool)
     paste_requested = Signal()
+    settings_requested = Signal()
 
     def __init__(self, store: HistoryStore, service: ClipboardService, settings: AppSettings):
         super().__init__()
         self.store, self.service, self.settings = store, service, settings
         self._allow_close = False
+        self._render_generation = 0
+        self._render_items: list[ClipboardItem] = []
+        self._render_index = 0
         self.filter_kind = "all"
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setWindowTitle("Clipboard")
         self.resize(420, 620)
         self.setMinimumSize(360, 440)
         root = QWidget(objectName="root")
         self.setCentralWidget(root)
-        layout = QVBoxLayout(root)
-        layout.setContentsMargins(16, 16, 12, 12)
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.title_bar = TitleBar(self)
+        self.title_bar.minimize_requested.connect(self.showMinimized)
+        self.title_bar.maximize_requested.connect(self._toggle_maximized)
+        self.title_bar.close_requested.connect(self.close)
+        self.title_bar.pin_toggled.connect(self._set_pinned)
+        root_layout.addWidget(self.title_bar)
+        body = QWidget()
+        body.setObjectName("windowBody")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(16, 10, 12, 12)
         layout.setSpacing(11)
+        root_layout.addWidget(body, 1)
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索剪贴板内容…")
         self.search.setClearButtonEnabled(True)
@@ -352,13 +442,12 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         top.setSpacing(8)
         top.addWidget(self.search, 1)
-        self.pin_button = QPushButton("固定")
-        self.pin_button.setObjectName("pinButton")
-        self.pin_button.setCheckable(True)
-        self.pin_button.setFixedSize(58, 38)
-        self.pin_button.setToolTip("固定窗口在其他窗口上方")
-        self.pin_button.toggled.connect(self._set_pinned)
-        top.addWidget(self.pin_button)
+        self.settings_button = QPushButton("设置")
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.setFixedSize(58, 38)
+        self.settings_button.setToolTip("打开设置")
+        self.settings_button.clicked.connect(self.settings_requested)
+        top.addWidget(self.settings_button)
         layout.addLayout(top)
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 4, 1)
@@ -378,6 +467,7 @@ class MainWindow(QMainWindow):
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setViewportMargins(0, 0, 3, 0)
+        self.scroll.verticalScrollBar().valueChanged.connect(self._load_more_if_needed)
         self.container = QWidget()
         self.items_layout = QVBoxLayout(self.container)
         self.items_layout.setContentsMargins(0, 2, 5, 8)
@@ -400,11 +490,15 @@ class MainWindow(QMainWindow):
         self.service.history_changed.connect(self.refresh)
         self.service.error.connect(lambda msg: QMessageBox.warning(self, "Clipboard", msg))
         self.apply_settings(settings)
+        self.pin_button = self.title_bar.pin_button
         self.pin_button.blockSignals(True)
         self.pin_button.setChecked(settings.always_on_top)
         self.pin_button.blockSignals(False)
         self._apply_pin_state(settings.always_on_top)
         self.refresh()
+
+    def _toggle_maximized(self) -> None:
+        self.showNormal() if self.isMaximized() else self.showMaximized()
 
     def apply_settings(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -428,6 +522,10 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def refresh(self) -> None:
+        self._render_generation += 1
+        generation = self._render_generation
+        self._render_items = []
+        self._render_index = 0
         while self.items_layout.count():
             child = self.items_layout.takeAt(0)
             if child.widget():
@@ -440,21 +538,69 @@ class MainWindow(QMainWindow):
             empty.setAlignment(Qt.AlignCenter)
             empty.setMinimumHeight(120)
             self.items_layout.addWidget(empty)
-        for item in items:
-            card = ItemCard(
-                item,
-                favorite_view=self.filter_kind == "favorite",
-                reorder_enabled=not self.search.text().strip(),
-            )
-            card.copy_requested.connect(self._copy)
-            card.favorite_requested.connect(self._favorite)
-            card.delete_requested.connect(self._delete)
-            card.rename_requested.connect(self._rename)
-            card.content_modified.connect(self._modify_content)
-            card.drag_started.connect(self._start_favorite_drag)
-            card.drag_moved.connect(self._drag_favorite)
-            card.drag_finished.connect(self._finish_favorite_drag)
-            self.items_layout.addWidget(card)
+            return
+        self._render_items = items
+        self._render_index = 0
+        self._render_next_batch(generation)
+
+    def _render_next_batch(self, generation: int) -> None:
+        if generation != self._render_generation:
+            return
+        end = min(self._render_index + 12, len(self._render_items))
+        for item in self._render_items[self._render_index:end]:
+            self.items_layout.addWidget(self._create_item_card(item))
+        self._render_index = end
+        QTimer.singleShot(0, lambda current=generation: self._ensure_viewport_filled(current))
+
+    def _ensure_viewport_filled(self, generation: int) -> None:
+        if generation != self._render_generation or self._render_index >= len(self._render_items):
+            return
+        bar = self.scroll.verticalScrollBar()
+        if bar.maximum() == 0:
+            self._render_next_batch(generation)
+
+    def _load_more_if_needed(self, value: int) -> None:
+        if self._render_index >= len(self._render_items):
+            return
+        bar = self.scroll.verticalScrollBar()
+        if bar.maximum() - value <= 180:
+            self._render_next_batch(self._render_generation)
+
+    def _create_item_card(self, item: ClipboardItem) -> ItemCard:
+        card = ItemCard(
+            item,
+            favorite_view=self.filter_kind == "favorite",
+            reorder_enabled=not self.search.text().strip(),
+        )
+        card.copy_requested.connect(self._copy)
+        card.favorite_requested.connect(self._favorite)
+        card.delete_requested.connect(self._delete)
+        card.rename_requested.connect(self._rename)
+        card.content_modified.connect(self._modify_content)
+        card.drag_started.connect(self._start_favorite_drag)
+        card.drag_moved.connect(self._drag_favorite)
+        card.drag_finished.connect(self._finish_favorite_drag)
+        return card
+
+    def nativeEvent(self, event_type, message):
+        if sys.platform == "win32" and not self.isMaximized():
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0084:
+                x = ctypes.c_short(msg.lParam & 0xFFFF).value
+                y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                frame = self.frameGeometry()
+                border = 6
+                left, right = x < frame.left() + border, x >= frame.right() - border
+                top, bottom = y < frame.top() + border, y >= frame.bottom() - border
+                if top and left: return True, 13
+                if top and right: return True, 14
+                if bottom and left: return True, 16
+                if bottom and right: return True, 17
+                if left: return True, 10
+                if right: return True, 11
+                if top: return True, 12
+                if bottom: return True, 15
+        return super().nativeEvent(event_type, message)
 
     def _copy(self, item_id: int) -> None:
         item = self.store.get(item_id)
