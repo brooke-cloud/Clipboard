@@ -424,7 +424,7 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         self.title_bar = TitleBar(self)
-        self.title_bar.minimize_requested.connect(self.showMinimized)
+        self.title_bar.minimize_requested.connect(self._minimize_to_tray)
         self.title_bar.maximize_requested.connect(self._toggle_maximized)
         self.title_bar.close_requested.connect(self.close)
         self.title_bar.pin_toggled.connect(self._set_pinned)
@@ -450,11 +450,11 @@ class MainWindow(QMainWindow):
         top.addWidget(self.settings_button)
         layout.addLayout(top)
         nav = QHBoxLayout()
-        nav.setContentsMargins(0, 0, 4, 1)
+        nav.setContentsMargins(0, 0, 4, 0)
         nav.setSpacing(8)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
-        for label, kind in [("全部", "all"), ("文字", "text"), ("图片", "image"), ("文件", "files"), ("收藏", "favorite")]:
+        for label, kind in [("全部", "all"), ("收藏", "favorite")]:
             button = QPushButton(label)
             button.setObjectName("categoryButton")
             button.setCheckable(True)
@@ -463,6 +463,21 @@ class MainWindow(QMainWindow):
             nav.addWidget(button, 1)
             if kind == "all": button.setChecked(True)
         layout.addLayout(nav)
+        self.type_nav = QWidget()
+        self.type_nav.setObjectName("subcategoryBar")
+        type_nav_layout = QHBoxLayout(self.type_nav)
+        type_nav_layout.setContentsMargins(18, 0, 18, 1)
+        type_nav_layout.setSpacing(8)
+        self.type_group = QButtonGroup(self)
+        self.type_group.setExclusive(True)
+        for label, kind in [("文字", "text"), ("图片", "image"), ("文件", "files")]:
+            button = QPushButton(label)
+            button.setObjectName("subcategoryButton")
+            button.setCheckable(True)
+            button.setProperty("kind", kind)
+            self.type_group.addButton(button)
+            type_nav_layout.addWidget(button, 1)
+        layout.addWidget(self.type_nav)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -486,7 +501,8 @@ class MainWindow(QMainWindow):
         bottom.setContentsMargins(2, 1, 4, 0)
         layout.addLayout(bottom)
         self.search.textChanged.connect(self.refresh)
-        self.group.buttonClicked.connect(self._filter)
+        self.group.buttonClicked.connect(self._primary_filter)
+        self.type_group.buttonClicked.connect(self._type_filter)
         self.service.history_changed.connect(self.refresh)
         self.service.error.connect(lambda msg: QMessageBox.warning(self, "Clipboard", msg))
         self.apply_settings(settings)
@@ -499,6 +515,9 @@ class MainWindow(QMainWindow):
 
     def _toggle_maximized(self) -> None:
         self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    def _minimize_to_tray(self) -> None:
+        self.hide()
 
     def apply_settings(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -517,7 +536,21 @@ class MainWindow(QMainWindow):
             self.show()
             self.raise_()
 
-    def _filter(self, button) -> None:
+    def _primary_filter(self, button) -> None:
+        kind = button.property("kind")
+        self.type_nav.setVisible(kind == "all")
+        if kind == "all":
+            self.type_group.setExclusive(False)
+            for type_button in self.type_group.buttons():
+                type_button.setChecked(False)
+            self.type_group.setExclusive(True)
+        self.filter_kind = kind
+        self.refresh()
+
+    def _type_filter(self, button) -> None:
+        all_button = next(item for item in self.group.buttons() if item.property("kind") == "all")
+        all_button.setChecked(True)
+        self.type_nav.show()
         self.filter_kind = button.property("kind")
         self.refresh()
 

@@ -75,6 +75,10 @@ def stylesheet(settings: AppSettings) -> str:
         QPushButton#titlePinButton:checked {{ color: white; background: #2563eb; }}
         QPushButton#windowButton[closeButton="true"]:hover {{ color: white; background: #dc2626; }}
         QPushButton#categoryButton {{ min-height: 22px; }}
+        QWidget#subcategoryBar {{ background: transparent; }}
+        QPushButton#subcategoryButton {{ min-height: 20px; color: {muted}; border: 1px solid rgba(128,140,160,0.16); }}
+        QPushButton#subcategoryButton:hover {{ color: {fg}; border-color: rgba(37,99,235,0.55); }}
+        QPushButton#subcategoryButton:checked {{ color: white; background: #2563eb; border-color: #2563eb; }}
         QPushButton#actionButton {{ padding: 0; border-radius: 6px; color: {muted}; }}
         QPushButton#actionButton:hover {{ color: {fg}; background: rgba(37,99,235,0.16); }}
         QLabel#muted {{ color: {muted}; }}

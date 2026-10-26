@@ -6,8 +6,9 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, QTimer
+from PySide6.QtCore import QObject, QStandardPaths, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from .clipboard_service import ClipboardService
@@ -16,6 +17,44 @@ from .settings import SettingsStore
 from .settings_dialog import SettingsDialog
 from .storage import HistoryStore
 from .window import MainWindow
+
+
+class SingleInstanceGuard(QObject):
+    activate_requested = Signal()
+
+    def __init__(self, server_name: str = "ClipboardV1.SingleInstance"):
+        super().__init__()
+        self.server_name = server_name
+        self.server: QLocalServer | None = None
+        self.is_primary = not self._notify_existing()
+        if not self.is_primary:
+            return
+        QLocalServer.removeServer(server_name)
+        self.server = QLocalServer(self)
+        if not self.server.listen(server_name):
+            self.is_primary = False
+            self._notify_existing()
+            return
+        self.server.newConnection.connect(self._accept_activation)
+
+    def _notify_existing(self) -> bool:
+        socket = QLocalSocket()
+        socket.connectToServer(self.server_name)
+        if not socket.waitForConnected(250):
+            return False
+        socket.write(b"ACTIVATE")
+        socket.waitForBytesWritten(250)
+        socket.disconnectFromServer()
+        return True
+
+    def _accept_activation(self) -> None:
+        if self.server is None:
+            return
+        while self.server.hasPendingConnections():
+            socket = self.server.nextPendingConnection()
+            socket.disconnectFromServer()
+            socket.deleteLater()
+        self.activate_requested.emit()
 
 
 class ClipboardApplication:
@@ -75,6 +114,8 @@ class ClipboardApplication:
 
     def show_window(self) -> None:
         self._remember_foreground_window()
+        if self.window.isMinimized():
+            self.window.showNormal()
         self.window.show(); self.window.raise_(); self.window.activateWindow()
 
     def toggle_window(self) -> None:
@@ -167,7 +208,11 @@ def run() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Clipboard")
     app.setOrganizationName("Clipboard")
+    instance = SingleInstanceGuard()
+    if not instance.is_primary:
+        return 0
     controller = ClipboardApplication(app)
+    instance.activate_requested.connect(controller.show_window)
     controller.show_window()
     return app.exec()
 

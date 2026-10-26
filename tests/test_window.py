@@ -1,12 +1,17 @@
 import unittest
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
 from clipboard_app.models import ClipboardItem
-from clipboard_app.window import ContentEditDialog, ItemCard
+from clipboard_app.clipboard_service import ClipboardService
+from clipboard_app.settings import AppSettings
+from clipboard_app.storage import HistoryStore
+from clipboard_app.window import ContentEditDialog, ItemCard, MainWindow
 
 
 class FavoriteMenuTests(unittest.TestCase):
@@ -59,6 +64,28 @@ class FavoriteMenuTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual([card.item.id], requested)
         self.assertEqual(Qt.NoTextInteraction, card.content_label.textInteractionFlags())
+
+
+class WindowMinimizeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_minimize_button_hides_to_tray_without_minimized_window_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = HistoryStore(Path(directory))
+            service = ClipboardService(store)
+            service.paused = True
+            window = MainWindow(store, service, AppSettings())
+            window.show()
+            self.app.processEvents()
+            window.title_bar.minimize_button.click()
+            self.app.processEvents()
+            self.assertFalse(window.isVisible())
+            self.assertFalse(window.isMinimized())
+            service.clipboard.dataChanged.disconnect(service._schedule)
+            window.quit()
+            store.close()
 
 
 if __name__ == "__main__":
