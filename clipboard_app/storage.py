@@ -7,7 +7,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import ClipboardItem
+from .models import ClipboardItem, InterviewNote
 
 
 class HistoryStore:
@@ -55,6 +55,38 @@ class HistoryStore:
                 next_order += 1
                 self._db.execute("UPDATE history SET favorite_order=? WHERE id=?", (next_order, row["id"]))
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_history_updated ON history(updated_at DESC)")
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS interview_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    interview_order INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            interview_columns = {
+                row["name"] for row in self._db.execute("PRAGMA table_info(interview_notes)")
+            }
+            if "interview_order" not in interview_columns:
+                self._db.execute("ALTER TABLE interview_notes ADD COLUMN interview_order INTEGER")
+            unordered_notes = self._db.execute(
+                "SELECT id FROM interview_notes WHERE interview_order IS NULL "
+                "ORDER BY updated_at ASC, id ASC"
+            ).fetchall()
+            next_note_order = self._db.execute(
+                "SELECT COALESCE(MAX(interview_order), 0) FROM interview_notes"
+            ).fetchone()[0]
+            for row in unordered_notes:
+                next_note_order += 1
+                self._db.execute(
+                    "UPDATE interview_notes SET interview_order=? WHERE id=?",
+                    (next_note_order, row["id"]),
+                )
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_interview_notes_updated "
+                "ON interview_notes(updated_at DESC)"
+            )
 
     @staticmethod
     def _now() -> str:
@@ -232,6 +264,81 @@ class HistoryStore:
             self._remove_orphan(path)
         return cur.rowcount
 
+    @staticmethod
+    def _validate_interview_note(title: str, content: str) -> tuple[str, str]:
+        normalized_title = " ".join(title.split())
+        if not normalized_title:
+            raise ValueError("面试内容标题不能为空")
+        if len(normalized_title) > 80:
+            raise ValueError("面试内容标题不能超过 80 个字符")
+        normalized_content = content.strip()
+        if not normalized_content:
+            raise ValueError("面试内容不能为空")
+        if len(normalized_content) > 1_000_000:
+            raise ValueError("面试内容不能超过 100 万个字符")
+        return normalized_title, normalized_content
+
+    def add_interview_note(self, title: str, content: str) -> int:
+        title, content = self._validate_interview_note(title, content)
+        now = self._now()
+        with self._lock, self._db:
+            order = self._db.execute(
+                "SELECT COALESCE(MAX(interview_order), 0) + 1 FROM interview_notes"
+            ).fetchone()[0]
+            cursor = self._db.execute(
+                "INSERT INTO interview_notes(title,content,interview_order,created_at,updated_at) "
+                "VALUES(?,?,?,?,?)",
+                (title, content, order, now, now),
+            )
+        return int(cursor.lastrowid)
+
+    def list_interview_notes(self, search: str = "") -> list[InterviewNote]:
+        sql = "SELECT * FROM interview_notes"
+        args: list[str] = []
+        if search:
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            sql += " WHERE title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\'"
+            args.extend([f"%{escaped}%", f"%{escaped}%"])
+        sql += " ORDER BY interview_order DESC, updated_at DESC, id DESC"
+        with self._lock:
+            rows = self._db.execute(sql, args).fetchall()
+        return [self._interview_row(row) for row in rows]
+
+    def get_interview_note(self, note_id: int) -> InterviewNote | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM interview_notes WHERE id=?", (note_id,)).fetchone()
+        return self._interview_row(row) if row else None
+
+    def update_interview_note(self, note_id: int, title: str, content: str) -> None:
+        title, content = self._validate_interview_note(title, content)
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "UPDATE interview_notes SET title=?, content=?, updated_at=? WHERE id=?",
+                (title, content, self._now(), note_id),
+            )
+        if cursor.rowcount == 0:
+            raise ValueError("面试内容不存在或已被删除")
+
+    def delete_interview_note(self, note_id: int) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM interview_notes WHERE id=?", (note_id,))
+
+    def reorder_interview_notes(self, ordered_ids: list[int]) -> None:
+        if len(ordered_ids) != len(set(ordered_ids)):
+            raise ValueError("面试顺序中存在重复记录")
+        with self._lock, self._db:
+            existing = {
+                int(row[0]) for row in self._db.execute("SELECT id FROM interview_notes")
+            }
+            if set(ordered_ids) != existing:
+                raise ValueError("面试顺序与当前记录不一致")
+            total = len(ordered_ids)
+            for index, note_id in enumerate(ordered_ids):
+                self._db.execute(
+                    "UPDATE interview_notes SET interview_order=? WHERE id=?",
+                    (total - index, note_id),
+                )
+
     def _remove_orphan(self, path: str | None) -> None:
         if not path:
             return
@@ -252,6 +359,14 @@ class HistoryStore:
             custom_title=row["custom_title"],
             favorite_order=row["favorite_order"],
             created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _interview_row(row: sqlite3.Row) -> InterviewNote:
+        return InterviewNote(
+            id=row["id"], title=row["title"], content=row["content"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
     def close(self) -> None:

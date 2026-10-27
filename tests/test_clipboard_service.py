@@ -72,6 +72,10 @@ class ClipboardServiceTests(unittest.TestCase):
         source.unlink()
         self.assertFalse(self.service.restore(self.store.get(item_id)))
 
+    def test_copy_text_places_exact_text_on_clipboard(self):
+        self.assertTrue(self.service.copy_text("面试回答\n第二行"))
+        self.assertEqual("面试回答\n第二行", self.service.clipboard.text())
+
 
 if __name__ == "__main__":
     unittest.main()

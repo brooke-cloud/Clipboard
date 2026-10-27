@@ -80,3 +80,15 @@ class ClipboardService(QObject):
             self.error.emit("无法恢复该内容；源文件可能已被移动或删除")
             return False
 
+    def copy_text(self, text: str) -> bool:
+        if not text:
+            return False
+        try:
+            self._ignore_once = True
+            self.clipboard.setText(text)
+            return True
+        except Exception:
+            self._ignore_once = False
+            self.error.emit("无法复制该文字内容")
+            return False
+

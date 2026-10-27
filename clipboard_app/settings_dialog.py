@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from .settings import AppSettings
+from .dialog_utils import keep_dialog_above_parent
 
 
 class SettingsDialog(QDialog):
@@ -18,6 +19,7 @@ class SettingsDialog(QDialog):
         self.hotkey_callback = hotkey_callback
         self.setWindowTitle("设置")
         self.setMinimumWidth(390)
+        keep_dialog_above_parent(self, parent)
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
         layout.addWidget(tabs)

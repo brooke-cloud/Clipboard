@@ -173,6 +173,35 @@ class HistoryStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.update_favorite_text(favorite, "regular")
 
+    def test_interview_notes_add_edit_search_delete_and_restart(self):
+        note_id = self.store.add_interview_note(
+            "  Amazon BQ 模板  ",
+            "Situation\nTask\nAction\nResult",
+        )
+        note = self.store.get_interview_note(note_id)
+        self.assertEqual("Amazon BQ 模板", note.title)
+        self.assertEqual("Situation\nTask\nAction\nResult", note.content)
+        self.assertEqual([note_id], [item.id for item in self.store.list_interview_notes("Amazon")])
+        self.store.update_interview_note(note_id, "系统设计复习", "缓存、分片和一致性")
+        self.assertEqual("系统设计复习", self.store.get_interview_note(note_id).title)
+        self.store.close()
+        self.store = HistoryStore(Path(self.temp.name))
+        self.assertEqual("缓存、分片和一致性", self.store.get_interview_note(note_id).content)
+        self.store.delete_interview_note(note_id)
+        self.assertIsNone(self.store.get_interview_note(note_id))
+
+    def test_interview_note_validation_and_clear_history_isolation(self):
+        with self.assertRaises(ValueError):
+            self.store.add_interview_note("", "content")
+        with self.assertRaises(ValueError):
+            self.store.add_interview_note("title", "   ")
+        with self.assertRaises(ValueError):
+            self.store.add_interview_note("x" * 81, "content")
+        note_id = self.store.add_interview_note("独立内容", "不会被清理")
+        self.store.add_text("ordinary history")
+        self.assertEqual(1, self.store.clear_unstarred())
+        self.assertIsNotNone(self.store.get_interview_note(note_id))
+
 
 class HistoryMigrationTests(unittest.TestCase):
     def test_existing_database_is_migrated(self):
@@ -198,6 +227,8 @@ class HistoryMigrationTests(unittest.TestCase):
             columns = {row[1] for row in store._db.execute("PRAGMA table_info(history)")}
             self.assertIn("custom_title", columns)
             self.assertIn("favorite_order", columns)
+            tables = {row[0] for row in store._db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertIn("interview_notes", tables)
             store.close()
 
 

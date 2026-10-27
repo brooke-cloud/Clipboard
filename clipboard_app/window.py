@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
 )
 
 from .clipboard_service import ClipboardService
-from .models import ClipboardItem
+from .dialog_utils import keep_dialog_above_parent
+from .models import ClipboardItem, InterviewNote
 from .settings import AppSettings, stylesheet
 from .storage import HistoryStore
 
@@ -153,6 +154,7 @@ class ContentEditDialog(QDialog):
         self.setWindowTitle("修改收藏内容")
         self.resize(520, 360)
         self.setMinimumSize(380, 280)
+        keep_dialog_above_parent(self, parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 14)
         layout.setSpacing(12)
@@ -177,6 +179,121 @@ class ContentEditDialog(QDialog):
 
     def content(self) -> str:
         return self.editor.toPlainText()
+
+
+class InterviewEditDialog(QDialog):
+    def __init__(self, title: str = "", content: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("添加面试内容" if not title and not content else "修改面试内容")
+        self.resize(540, 410)
+        self.setMinimumSize(390, 310)
+        keep_dialog_above_parent(self, parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(10)
+        title_label = QLabel("标题")
+        title_label.setObjectName("muted")
+        layout.addWidget(title_label)
+        self.title_edit = QLineEdit(title)
+        self.title_edit.setMaxLength(80)
+        self.title_edit.setPlaceholderText("例如：Amazon BQ 常用回答")
+        layout.addWidget(self.title_edit)
+        content_label = QLabel("内容")
+        content_label.setObjectName("muted")
+        layout.addWidget(content_label)
+        self.content_edit = QTextEdit()
+        self.content_edit.setAcceptRichText(False)
+        self.content_edit.setPlainText(content)
+        self.content_edit.setPlaceholderText("输入需要整理或复习的面试内容…")
+        layout.addWidget(self.content_edit, 1)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("取消")
+        confirm = QPushButton("保存")
+        confirm.setObjectName("primary")
+        cancel.clicked.connect(self.reject)
+        confirm.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(confirm)
+        layout.addLayout(buttons)
+        self.title_edit.setFocus()
+
+    def values(self) -> tuple[str, str]:
+        return self.title_edit.text(), self.content_edit.toPlainText()
+
+
+class InterviewCard(QFrame):
+    copy_requested = Signal(int)
+    edit_requested = Signal(int)
+    delete_requested = Signal(int)
+    drag_started = Signal(int)
+    drag_moved = Signal(int, QPoint)
+    drag_finished = Signal()
+
+    def __init__(self, note: InterviewNote, reorder_enabled: bool = True):
+        super().__init__()
+        self.note = note
+        self.setObjectName("card")
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 10, 10, 11)
+        outer.setSpacing(7)
+        header = QHBoxLayout()
+        header.setSpacing(4)
+        title = ElidedLabel(note.title)
+        title.setObjectName("cardTitle")
+        header.addWidget(title, 1)
+        drag_handle = ReorderHandle()
+        drag_handle.setEnabled(reorder_enabled)
+        if not reorder_enabled:
+            drag_handle.setToolTip("清除搜索内容后可调整顺序")
+        drag_handle.drag_started.connect(lambda: self.drag_started.emit(note.id))
+        drag_handle.drag_moved.connect(lambda position: self.drag_moved.emit(note.id, position))
+        drag_handle.drag_finished.connect(self.drag_finished.emit)
+        edit = QPushButton("✎")
+        edit.setObjectName("actionButton")
+        edit.setFixedSize(28, 24)
+        edit.setToolTip("修改标题和内容")
+        edit.clicked.connect(lambda: self.edit_requested.emit(note.id))
+        more = QPushButton("•••")
+        more.setObjectName("actionButton")
+        more.setFixedSize(32, 24)
+        more.setToolTip("更多操作")
+        more.clicked.connect(self._show_menu)
+        header.addWidget(drag_handle)
+        header.addWidget(edit)
+        header.addWidget(more)
+        outer.addLayout(header)
+        meta = QLabel("面试  ·  " + note.updated_at.astimezone().strftime("%m-%d %H:%M"))
+        meta.setObjectName("muted")
+        outer.addWidget(meta)
+        content = ContentLabel(note.content)
+        self.content_label = content
+        content.setWordWrap(True)
+        content.setMinimumWidth(0)
+        content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        content.setMaximumHeight(150)
+        content.setTextInteractionFlags(Qt.NoTextInteraction)
+        content.setToolTip("双击复制并粘贴到之前的光标位置；完整内容可在修改窗口查看")
+        content.double_clicked.connect(lambda: self.copy_requested.emit(note.id))
+        outer.addWidget(content)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.copy_requested.emit(self.note.id)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _show_menu(self) -> None:
+        menu = QMenu(self)
+        edit = menu.addAction("修改")
+        edit.triggered.connect(lambda: self.edit_requested.emit(self.note.id))
+        menu.addSeparator()
+        delete = menu.addAction("删除")
+        delete.triggered.connect(lambda: self.delete_requested.emit(self.note.id))
+        button = self.sender()
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 
 
 class ItemCard(QFrame):
@@ -375,6 +492,7 @@ class ItemCard(QFrame):
             dialog = QDialog(self)
             dialog.setWindowTitle("完整文本")
             dialog.resize(520, 360)
+            keep_dialog_above_parent(dialog, self)
             layout = QVBoxLayout(dialog)
             text = QLabel(self.item.text)
             text.setWordWrap(True)
@@ -390,6 +508,7 @@ class ItemCard(QFrame):
                 dialog = QDialog(self)
                 dialog.setWindowTitle("图片预览")
                 dialog.resize(min(900, max(480, pixmap.width())), min(700, max(360, pixmap.height())))
+                keep_dialog_above_parent(dialog, self)
                 layout = QVBoxLayout(dialog)
                 label = QLabel()
                 label.setPixmap(pixmap)
@@ -411,7 +530,7 @@ class MainWindow(QMainWindow):
         self.store, self.service, self.settings = store, service, settings
         self._allow_close = False
         self._render_generation = 0
-        self._render_items: list[ClipboardItem] = []
+        self._render_items: list[ClipboardItem | InterviewNote] = []
         self._render_index = 0
         self.filter_kind = "all"
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
@@ -454,7 +573,7 @@ class MainWindow(QMainWindow):
         nav.setSpacing(8)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
-        for label, kind in [("全部", "all"), ("收藏", "favorite")]:
+        for label, kind in [("全部", "all"), ("收藏", "favorite"), ("面试", "interview")]:
             button = QPushButton(label)
             button.setObjectName("categoryButton")
             button.setCheckable(True)
@@ -463,6 +582,17 @@ class MainWindow(QMainWindow):
             nav.addWidget(button, 1)
             if kind == "all": button.setChecked(True)
         layout.addLayout(nav)
+        self.interview_toolbar = QWidget()
+        interview_tools = QHBoxLayout(self.interview_toolbar)
+        interview_tools.setContentsMargins(0, 0, 4, 0)
+        interview_tools.addStretch()
+        self.add_interview_button = QPushButton("＋ 添加面试内容")
+        self.add_interview_button.setObjectName("primary")
+        self.add_interview_button.setToolTip("新建带标题的面试笔记")
+        self.add_interview_button.clicked.connect(self._add_interview_note)
+        interview_tools.addWidget(self.add_interview_button)
+        self.interview_toolbar.hide()
+        layout.addWidget(self.interview_toolbar)
         self.type_nav = QWidget()
         self.type_nav.setObjectName("subcategoryBar")
         type_nav_layout = QHBoxLayout(self.type_nav)
@@ -493,11 +623,11 @@ class MainWindow(QMainWindow):
         bottom = QHBoxLayout()
         self.status = QLabel("●  正在监听")
         self.status.setObjectName("muted")
-        clear = QPushButton("清理普通历史")
-        clear.clicked.connect(self._clear)
+        self.clear_button = QPushButton("清理普通历史")
+        self.clear_button.clicked.connect(self._clear)
         bottom.addWidget(self.status)
         bottom.addStretch()
-        bottom.addWidget(clear)
+        bottom.addWidget(self.clear_button)
         bottom.setContentsMargins(2, 1, 4, 0)
         layout.addLayout(bottom)
         self.search.textChanged.connect(self.refresh)
@@ -539,6 +669,8 @@ class MainWindow(QMainWindow):
     def _primary_filter(self, button) -> None:
         kind = button.property("kind")
         self.type_nav.setVisible(kind == "all")
+        self.interview_toolbar.setVisible(kind == "interview")
+        self.clear_button.setVisible(kind != "interview")
         if kind == "all":
             self.type_group.setExclusive(False)
             for type_button in self.type_group.buttons():
@@ -551,6 +683,8 @@ class MainWindow(QMainWindow):
         all_button = next(item for item in self.group.buttons() if item.property("kind") == "all")
         all_button.setChecked(True)
         self.type_nav.show()
+        self.interview_toolbar.hide()
+        self.clear_button.show()
         self.filter_kind = button.property("kind")
         self.refresh()
 
@@ -564,7 +698,10 @@ class MainWindow(QMainWindow):
             if child.widget():
                 child.widget().hide()
                 child.widget().deleteLater()
-        items = self.store.list_items(self.filter_kind, self.search.text().strip())
+        if self.filter_kind == "interview":
+            items = self.store.list_interview_notes(self.search.text().strip())
+        else:
+            items = self.store.list_items(self.filter_kind, self.search.text().strip())
         if not items:
             empty = QLabel("暂无记录")
             empty.setObjectName("muted")
@@ -581,7 +718,10 @@ class MainWindow(QMainWindow):
             return
         end = min(self._render_index + 12, len(self._render_items))
         for item in self._render_items[self._render_index:end]:
-            self.items_layout.addWidget(self._create_item_card(item))
+            if isinstance(item, InterviewNote):
+                self.items_layout.addWidget(self._create_interview_card(item))
+            else:
+                self.items_layout.addWidget(self._create_item_card(item))
         self._render_index = end
         QTimer.singleShot(0, lambda current=generation: self._ensure_viewport_filled(current))
 
@@ -614,6 +754,98 @@ class MainWindow(QMainWindow):
         card.drag_moved.connect(self._drag_favorite)
         card.drag_finished.connect(self._finish_favorite_drag)
         return card
+
+    def _create_interview_card(self, note: InterviewNote) -> InterviewCard:
+        card = InterviewCard(note, reorder_enabled=not self.search.text().strip())
+        card.copy_requested.connect(self._copy_interview_note)
+        card.edit_requested.connect(self._edit_interview_note)
+        card.delete_requested.connect(self._delete_interview_note)
+        card.drag_started.connect(self._start_interview_drag)
+        card.drag_moved.connect(self._drag_interview)
+        card.drag_finished.connect(self._finish_interview_drag)
+        return card
+
+    def _copy_interview_note(self, note_id: int) -> None:
+        note = self.store.get_interview_note(note_id)
+        if note and self.service.copy_text(note.content):
+            self.status.setText("正在粘贴面试内容到光标位置…")
+            self.paste_requested.emit()
+
+    def _add_interview_note(self) -> None:
+        dialog = InterviewEditDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        title, content = dialog.values()
+        try:
+            self.store.add_interview_note(title, content)
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法添加面试内容", str(exc))
+            return
+        self.status.setText("面试内容已添加")
+        self.refresh()
+
+    def _edit_interview_note(self, note_id: int) -> None:
+        note = self.store.get_interview_note(note_id)
+        if note is None:
+            self.refresh()
+            return
+        dialog = InterviewEditDialog(note.title, note.content, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        title, content = dialog.values()
+        try:
+            self.store.update_interview_note(note_id, title, content)
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法修改面试内容", str(exc))
+            return
+        self.status.setText("面试内容已更新")
+        self.refresh()
+
+    def _delete_interview_note(self, note_id: int) -> None:
+        self.store.delete_interview_note(note_id)
+        self.status.setText("面试内容已删除")
+        self.refresh()
+
+    def _start_interview_drag(self, note_id: int) -> None:
+        self._dragged_interview_id = note_id
+
+    def _drag_interview(self, note_id: int, global_position: QPoint) -> None:
+        if getattr(self, "_dragged_interview_id", None) != note_id:
+            return
+        cards = [
+            self.items_layout.itemAt(index).widget()
+            for index in range(self.items_layout.count())
+        ]
+        cards = [card for card in cards if isinstance(card, InterviewCard)]
+        current = next((index for index, card in enumerate(cards) if card.note.id == note_id), -1)
+        if current < 0:
+            return
+        local_y = self.container.mapFromGlobal(global_position).y()
+        target = len(cards) - 1
+        for index, card in enumerate(cards):
+            if local_y < card.geometry().center().y():
+                target = index
+                break
+        if target != current:
+            layout_item = self.items_layout.takeAt(current)
+            self.items_layout.insertWidget(target, layout_item.widget())
+            self.items_layout.activate()
+
+    def _finish_interview_drag(self) -> None:
+        if not hasattr(self, "_dragged_interview_id"):
+            return
+        ordered_ids = [
+            self.items_layout.itemAt(index).widget().note.id
+            for index in range(self.items_layout.count())
+            if isinstance(self.items_layout.itemAt(index).widget(), InterviewCard)
+        ]
+        try:
+            self.store.reorder_interview_notes(ordered_ids)
+            self.status.setText("面试顺序已保存")
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法调整面试顺序", str(exc))
+            self.refresh()
+        del self._dragged_interview_id
 
     def nativeEvent(self, event_type, message):
         if sys.platform == "win32" and not self.isMaximized():

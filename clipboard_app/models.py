@@ -30,3 +30,12 @@ class ClipboardItem:
         first = Path(self.files[0]).name
         return first if len(self.files) == 1 else f"{first} 等 {len(self.files)} 项"
 
+
+@dataclass(slots=True)
+class InterviewNote:
+    id: int
+    title: str
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
