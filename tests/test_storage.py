@@ -202,6 +202,24 @@ class HistoryStoreTests(unittest.TestCase):
         self.assertEqual(1, self.store.clear_unstarred())
         self.assertIsNotNone(self.store.get_interview_note(note_id))
 
+    def test_interview_notes_drag_order_persists_and_validates(self):
+        ids = [
+            self.store.add_interview_note(title, f"{title} content")
+            for title in ("one", "two", "three")
+        ]
+        dragged = [ids[0], ids[2], ids[1]]
+        self.store.reorder_interview_notes(dragged)
+        self.assertEqual(dragged, [note.id for note in self.store.list_interview_notes()])
+        self.store.update_interview_note(ids[2], "three updated", "updated content")
+        self.assertEqual(dragged, [note.id for note in self.store.list_interview_notes()])
+        self.store.close()
+        self.store = HistoryStore(Path(self.temp.name))
+        self.assertEqual(dragged, [note.id for note in self.store.list_interview_notes()])
+        with self.assertRaises(ValueError):
+            self.store.reorder_interview_notes([ids[0]])
+        with self.assertRaises(ValueError):
+            self.store.reorder_interview_notes([ids[0], ids[0], ids[1]])
+
 
 class HistoryMigrationTests(unittest.TestCase):
     def test_existing_database_is_migrated(self):
@@ -229,6 +247,10 @@ class HistoryMigrationTests(unittest.TestCase):
             self.assertIn("favorite_order", columns)
             tables = {row[0] for row in store._db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("interview_notes", tables)
+            interview_columns = {
+                row[1] for row in store._db.execute("PRAGMA table_info(interview_notes)")
+            }
+            self.assertIn("interview_order", interview_columns)
             store.close()
 
 

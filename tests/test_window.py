@@ -110,8 +110,16 @@ class InterviewUiTests(unittest.TestCase):
         card.delete_requested.emit(note.id)
         self.assertEqual([7], edited)
         self.assertEqual([7], deleted)
+        self.assertTrue(card.drag_handle.isEnabled())
         card.deleteLater()
         self.app.processEvents()
+
+    def test_interview_drag_handle_is_disabled_during_search(self):
+        now = datetime.now(timezone.utc)
+        note = InterviewNote(9, "搜索结果", "正文", now, now)
+        card = InterviewCard(note, reorder_enabled=False)
+        self.assertFalse(card.drag_handle.isEnabled())
+        card.deleteLater()
 
     def test_double_clicking_interview_content_requests_copy_without_selecting(self):
         now = datetime.now(timezone.utc)

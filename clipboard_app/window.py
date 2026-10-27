@@ -244,6 +244,7 @@ class InterviewCard(QFrame):
         title.setObjectName("cardTitle")
         header.addWidget(title, 1)
         drag_handle = ReorderHandle()
+        self.drag_handle = drag_handle
         drag_handle.setEnabled(reorder_enabled)
         if not reorder_enabled:
             drag_handle.setToolTip("清除搜索内容后可调整顺序")
@@ -716,7 +717,10 @@ class MainWindow(QMainWindow):
     def _render_next_batch(self, generation: int) -> None:
         if generation != self._render_generation:
             return
-        end = min(self._render_index + 12, len(self._render_items))
+        if self.filter_kind == "interview" and not self.search.text().strip():
+            end = len(self._render_items)
+        else:
+            end = min(self._render_index + 12, len(self._render_items))
         for item in self._render_items[self._render_index:end]:
             if isinstance(item, InterviewNote):
                 self.items_layout.addWidget(self._create_interview_card(item))
